@@ -1,0 +1,62 @@
+{
+  "name": "codex-message-schdeuler",
+  "version": "0.1.0",
+  "description": "Unofficial local scheduler for Codex CLI sessions using tmux and one-shot launchd scheduling.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "codex-message-schdeuler": "./dist/cli.js",
+    "codex-tmux-scheduler": "./dist/cli.js",
+    "codex-scheduler": "./dist/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sameerthapax/codex-message-schdeuler.git"
+  },
+  "homepage": "https://github.com/sameerthapax/codex-message-schdeuler#readme",
+  "bugs": {
+    "url": "https://github.com/sameerthapax/codex-message-schdeuler/issues"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "scripts": {
+    "build": "npm run clean && tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "clean": "rm -rf dist .tmp",
+    "dev": "tsx src/cli.ts",
+    "postinstall": "chmod +x dist/cli.js || true",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run build && npm run typecheck && npm test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "codex",
+    "cli",
+    "scheduler",
+    "tmux",
+    "local",
+    "automation"
+  ],
+  "dependencies": {
+    "@inquirer/prompts": "^7.8.4",
+    "boxen": "^8.0.1",
+    "chalk": "^5.4.1",
+    "chrono-node": "^2.8.1",
+    "cli-table3": "^0.6.5",
+    "commander": "^14.0.0",
+    "date-fns": "^4.1.0",
+    "ora": "^8.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.13",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
