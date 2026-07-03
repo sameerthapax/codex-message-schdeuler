@@ -1,13 +1,21 @@
+import { existsSync } from "node:fs";
 import { mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
 const configuredAppDir =
-  process.env.CODEX_TMUX_SCHEDULER_HOME?.trim() || process.env.CODEX_SCHEDULER_HOME?.trim();
+  process.env.CODEX_MESSAGE_SCHEDULER_HOME?.trim() ||
+  process.env.CODEX_TMUX_SCHEDULER_HOME?.trim() ||
+  process.env.CODEX_SCHEDULER_HOME?.trim();
+
+const modernDefaultAppDir = path.join(os.homedir(), ".codex-message-scheduler");
+const legacyDefaultAppDir = path.join(os.homedir(), ".codex-scheduler");
 
 const resolvedAppDir = configuredAppDir
   ? path.resolve(configuredAppDir)
-  : path.join(os.homedir(), ".codex-scheduler");
+  : legacyDirShouldBeUsed()
+    ? legacyDefaultAppDir
+    : modernDefaultAppDir;
 
 export const APP_DIR = resolvedAppDir;
 export const JOBS_FILE = path.join(resolvedAppDir, "jobs.json");
@@ -56,4 +64,8 @@ export async function pathExists(targetPath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function legacyDirShouldBeUsed(): boolean {
+  return existsSync(legacyDefaultAppDir) && !existsSync(modernDefaultAppDir);
 }

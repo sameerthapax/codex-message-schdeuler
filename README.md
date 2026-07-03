@@ -186,24 +186,28 @@ Command notes:
 Default storage remains:
 
 ```text
-~/.codex-scheduler/
+~/.codex-message-scheduler/
 ```
 
-This is intentionally preserved for backward compatibility with existing local users. The package name changed, but the default storage path did not.
+Compatibility note:
+
+- New installs default to `~/.codex-message-scheduler/`
+- If an existing `~/.codex-scheduler/` directory is present and the new directory does not exist yet, the CLI continues using the legacy path automatically
 
 Environment overrides:
 
+- `CODEX_MESSAGE_SCHEDULER_HOME`
 - `CODEX_TMUX_SCHEDULER_HOME`
 - `CODEX_SCHEDULER_HOME`
 
 Stored files:
 
-- `~/.codex-scheduler/jobs.json`
-- `~/.codex-scheduler/config.json`
-- `~/.codex-scheduler/logs/<jobId>.log`
-- `~/.codex-scheduler/runtime.log`
-- `~/.codex-scheduler/launchd.stdout.log`
-- `~/.codex-scheduler/launchd.stderr.log`
+- `~/.codex-message-scheduler/jobs.json`
+- `~/.codex-message-scheduler/config.json`
+- `~/.codex-message-scheduler/logs/<jobId>.log`
+- `~/.codex-message-scheduler/runtime.log`
+- `~/.codex-message-scheduler/launchd.stdout.log`
+- `~/.codex-message-scheduler/launchd.stderr.log`
 
 ## Security and privacy
 
@@ -307,7 +311,7 @@ codex-message-schdeuler install-daemon
 - Inspect the per-job log:
 
 ```bash
-cat ~/.codex-scheduler/logs/<jobId>.log
+cat ~/.codex-message-scheduler/logs/<jobId>.log
 ```
 
 - The job will fail rather than falsely report success if the active prompt still contains the unsent draft
@@ -318,8 +322,8 @@ cat ~/.codex-scheduler/logs/<jobId>.log
 - Check:
 
 ```bash
-cat ~/.codex-scheduler/runtime.log
-cat ~/.codex-scheduler/launchd.stderr.log
+cat ~/.codex-message-scheduler/runtime.log
+cat ~/.codex-message-scheduler/launchd.stderr.log
 ```
 
 ## Development

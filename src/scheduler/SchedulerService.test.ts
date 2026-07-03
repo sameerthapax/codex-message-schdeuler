@@ -8,9 +8,9 @@ describe("SchedulerService", () => {
   let tempHome: string;
 
   beforeEach(async () => {
-    tempHome = await mkdtemp(path.join(os.tmpdir(), "codex-scheduler-service-"));
+    tempHome = await mkdtemp(path.join(os.tmpdir(), "codex-message-scheduler-service-"));
     vi.stubEnv("HOME", tempHome);
-    vi.stubEnv("CODEX_SCHEDULER_HOME", path.join(tempHome, ".codex-scheduler"));
+    vi.stubEnv("CODEX_MESSAGE_SCHEDULER_HOME", path.join(tempHome, ".codex-message-scheduler"));
   });
 
   afterEach(() => {

@@ -8,9 +8,9 @@ describe("DaemonService", () => {
   let tempHome: string;
 
   beforeEach(async () => {
-    tempHome = await mkdtemp(path.join(os.tmpdir(), "codex-scheduler-daemon-"));
+    tempHome = await mkdtemp(path.join(os.tmpdir(), "codex-message-scheduler-daemon-"));
     vi.stubEnv("HOME", tempHome);
-    vi.stubEnv("CODEX_SCHEDULER_HOME", path.join(tempHome, ".codex-scheduler"));
+    vi.stubEnv("CODEX_MESSAGE_SCHEDULER_HOME", path.join(tempHome, ".codex-message-scheduler"));
     vi.resetModules();
   });
 
@@ -92,7 +92,7 @@ describe("DaemonService", () => {
     const scheduler = new LaunchdScheduler({
       platform: "darwin",
       plistPath,
-      scriptPath: "/tmp/codex-scheduler.js",
+      scriptPath: "/tmp/codex-message-scheduler.js",
       nodePath: "/usr/local/bin/node",
       jobStore: store,
       runCommandFn: async (_command, args) => {
@@ -201,7 +201,7 @@ describe("DaemonService", () => {
     const scheduler = new LaunchdScheduler({
       platform: "darwin",
       plistPath,
-      scriptPath: "/tmp/codex-scheduler.js",
+      scriptPath: "/tmp/codex-message-scheduler.js",
       nodePath: "/usr/local/bin/node",
       jobStore: store,
       runCommandFn: async () => ({ exitCode: 0, stdout: "", stderr: "" }),

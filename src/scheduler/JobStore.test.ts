@@ -8,7 +8,7 @@ describe("JobStore", () => {
   let tempHome: string;
 
   beforeEach(async () => {
-    tempHome = await mkdtemp(path.join(os.tmpdir(), "codex-scheduler-test-"));
+    tempHome = await mkdtemp(path.join(os.tmpdir(), "codex-message-scheduler-test-"));
     vi.stubEnv("HOME", tempHome);
   });
 
@@ -32,7 +32,7 @@ describe("JobStore", () => {
     const jobs = await store.list();
     expect(jobs).toHaveLength(1);
 
-    const file = path.join(tempHome, ".codex-scheduler", "jobs.json");
+    const file = path.join(tempHome, ".codex-message-scheduler", "jobs.json");
     const raw = JSON.parse(await readFile(file, "utf8")) as { jobs: Array<{ id: string }> };
     expect(raw.jobs[0]?.id).toBe("job-1");
   });
