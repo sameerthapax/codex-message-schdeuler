@@ -9,6 +9,7 @@ import { logLine } from "../utils/logger.js";
 import { runCommand, type CommandResult } from "../utils/shell.js";
 
 const DAEMON_LABEL = "com.codex-message-schdeuler.agent";
+const WINDOWS_TASK_NAME = "codex-message-schdeuler-agent";
 const LEGACY_DAEMONS = [
   {
     label: "com.codex-tmux-scheduler.agent",
@@ -21,11 +22,20 @@ const LEGACY_DAEMONS = [
 ];
 
 export interface DaemonStatus {
-  mode: "one-shot" | "unsupported";
+  mode: "one-shot" | "manual";
   armed: boolean;
   plistPath: string;
   nextRunAt?: string;
   oldPollingPlistDetected: boolean;
+  scheduler: "launchd" | "schtasks" | "manual";
+}
+
+export interface SchedulerAdapter {
+  refreshSchedule(): Promise<void>;
+  armNextRun(nextRunAt: Date): Promise<void>;
+  disarm(): Promise<void>;
+  status(): Promise<DaemonStatus>;
+  migrateOldPollingPlistIfNeeded(): Promise<boolean>;
 }
 
 interface LaunchdPlistData {
@@ -47,7 +57,7 @@ interface LaunchdSchedulerOptions {
   logFn?: (message: string) => Promise<void>;
 }
 
-export class LaunchdScheduler {
+export class LaunchdScheduler implements SchedulerAdapter {
   private readonly jobStore: JobStore;
   private readonly scriptPath: string;
   private readonly plistPath: string;
@@ -127,10 +137,11 @@ export class LaunchdScheduler {
 
   async status(): Promise<DaemonStatus> {
     const defaultStatus: DaemonStatus = {
-      mode: this.platform === "darwin" ? "one-shot" : "unsupported",
+      mode: this.platform === "darwin" ? "one-shot" : "manual",
       armed: false,
       plistPath: this.plistPath,
       oldPollingPlistDetected: false,
+      scheduler: "launchd",
     };
 
     if (this.platform !== "darwin") {
@@ -169,6 +180,7 @@ export class LaunchdScheduler {
       plistPath: this.plistPath,
       nextRunAt: currentParsed.nextRunAt?.toISOString(),
       oldPollingPlistDetected,
+      scheduler: "launchd",
     };
   }
 
@@ -218,12 +230,170 @@ export class LaunchdScheduler {
   }
 }
 
-export async function ensureDaemonInstalledForCurrentCli(): Promise<void> {
-  if (process.platform !== "darwin") {
-    return;
+interface WindowsTaskSchedulerOptions {
+  scriptPath?: string;
+  jobStore?: JobStore;
+  platform?: NodeJS.Platform;
+  nodePath?: string;
+  runCommandFn?: (
+    command: string,
+    args: string[],
+    options?: { cwd?: string; timeoutMs?: number },
+  ) => Promise<CommandResult>;
+  logFn?: (message: string) => Promise<void>;
+  taskName?: string;
+}
+
+export class WindowsTaskScheduler implements SchedulerAdapter {
+  private readonly jobStore: JobStore;
+  private readonly scriptPath: string;
+  private readonly platform: NodeJS.Platform;
+  private readonly nodePath: string;
+  private readonly runCommandFn: (
+    command: string,
+    args: string[],
+    options?: { cwd?: string; timeoutMs?: number },
+  ) => Promise<CommandResult>;
+  private readonly logFn: (message: string) => Promise<void>;
+  private readonly taskName: string;
+
+  constructor(options: WindowsTaskSchedulerOptions = {}) {
+    this.jobStore = options.jobStore ?? new JobStore();
+    this.scriptPath = options.scriptPath ?? process.argv[1];
+    this.platform = options.platform ?? process.platform;
+    this.nodePath = options.nodePath ?? process.execPath;
+    this.runCommandFn = options.runCommandFn ?? runCommand;
+    this.logFn = options.logFn ?? logLine;
+    this.taskName = options.taskName ?? WINDOWS_TASK_NAME;
   }
 
-  const scheduler = new LaunchdScheduler();
+  async refreshSchedule(): Promise<void> {
+    if (this.platform !== "win32") {
+      return;
+    }
+
+    const nextJob = await this.jobStore.nextPending();
+    if (!nextJob) {
+      await this.disarm();
+      await this.logFn("windows scheduler disarmed: no pending jobs");
+      return;
+    }
+
+    const nextRunAt = getArmTimeForJob(nextJob);
+    await this.armNextRun(nextRunAt);
+    await this.logFn(`windows scheduler armed for ${nextRunAt.toISOString()} (${nextJob.id})`);
+  }
+
+  async armNextRun(nextRunAt: Date): Promise<void> {
+    if (this.platform !== "win32") {
+      return;
+    }
+
+    await this.disarm();
+
+    const runTarget = buildWindowsTaskRunTarget(this.nodePath, this.scriptPath);
+    const result = await this.runCommandFn(
+      "schtasks",
+      [
+        "/Create",
+        "/TN",
+        this.taskName,
+        "/SC",
+        "ONCE",
+        "/SD",
+        formatWindowsDate(nextRunAt),
+        "/ST",
+        formatWindowsTime(nextRunAt),
+        "/TR",
+        runTarget,
+        "/F",
+      ],
+      { timeoutMs: 10000 },
+    ).catch((error) => ({ exitCode: 1, stdout: "", stderr: String(error) }));
+
+    if (result.exitCode !== 0) {
+      await this.logFn(`schtasks create failed: ${result.stderr.trim() || "unknown error"}`);
+      throw new Error(result.stderr.trim() || "Failed to create Windows scheduled task.");
+    }
+  }
+
+  async disarm(): Promise<void> {
+    if (this.platform !== "win32") {
+      return;
+    }
+
+    const result = await this.runCommandFn(
+      "schtasks",
+      ["/Delete", "/TN", this.taskName, "/F"],
+      { timeoutMs: 10000 },
+    ).catch(() => null);
+
+    if (result && result.exitCode !== 0) {
+      const stderr = result.stderr.trim();
+      if (stderr && !/cannot find the file|cannot find the task|cannot find/i.test(stderr)) {
+        await this.logFn(`schtasks delete warning: ${stderr}`);
+      }
+    }
+  }
+
+  async status(): Promise<DaemonStatus> {
+    const defaultStatus: DaemonStatus = {
+      mode: this.platform === "win32" ? "one-shot" : "manual",
+      armed: false,
+      plistPath: `Task Scheduler\\${this.taskName}`,
+      oldPollingPlistDetected: false,
+      scheduler: "schtasks",
+    };
+
+    if (this.platform !== "win32") {
+      return defaultStatus;
+    }
+
+    const result = await this.runCommandFn(
+      "schtasks",
+      ["/Query", "/TN", this.taskName, "/FO", "LIST", "/V"],
+      { timeoutMs: 10000 },
+    ).catch(() => null);
+
+    if (!result || result.exitCode !== 0) {
+      return defaultStatus;
+    }
+
+    return {
+      mode: "one-shot",
+      armed: true,
+      plistPath: `Task Scheduler\\${this.taskName}`,
+      nextRunAt: parseWindowsNextRunTime(result.stdout)?.toISOString(),
+      oldPollingPlistDetected: false,
+      scheduler: "schtasks",
+    };
+  }
+
+  async migrateOldPollingPlistIfNeeded(): Promise<boolean> {
+    return false;
+  }
+}
+
+class ManualScheduler implements SchedulerAdapter {
+  async refreshSchedule(): Promise<void> {}
+  async armNextRun(_nextRunAt: Date): Promise<void> {}
+  async disarm(): Promise<void> {}
+  async status(): Promise<DaemonStatus> {
+    return {
+      mode: "manual",
+      armed: false,
+      plistPath: "manual",
+      oldPollingPlistDetected: false,
+      scheduler: "manual",
+    };
+  }
+  async migrateOldPollingPlistIfNeeded(): Promise<boolean> {
+    return false;
+  }
+}
+
+export async function ensureDaemonInstalledForCurrentCli(): Promise<void> {
+  const scheduler = createDefaultScheduler();
   await scheduler.migrateOldPollingPlistIfNeeded();
 }
 
@@ -231,20 +401,31 @@ export async function installDaemonForCurrentCli(): Promise<{
   plistPath: string;
   message: string;
 }> {
-  const scheduler = new LaunchdScheduler();
+  const scheduler = createDefaultScheduler();
   await scheduler.refreshSchedule();
   const nextJob = await new JobStore().nextPending();
+  const status = await scheduler.status();
 
   return {
-    plistPath: getPlistPath(),
+    plistPath: status.plistPath,
     message: nextJob
-      ? `launchd armed for ${nextJob.scheduledAt}`
-      : "No pending jobs. launchd will be armed automatically when you schedule one.",
+      ? `${status.scheduler} armed for ${nextJob.scheduledAt}`
+      : "No pending jobs. automatic scheduling will be armed automatically when you schedule one.",
   };
 }
 
 export function createDefaultLaunchdScheduler(): LaunchdScheduler {
   return new LaunchdScheduler();
+}
+
+export function createDefaultScheduler(): SchedulerAdapter {
+  if (process.platform === "darwin") {
+    return new LaunchdScheduler();
+  }
+  if (process.platform === "win32") {
+    return new WindowsTaskScheduler();
+  }
+  return new ManualScheduler();
 }
 
 export function getPlistPath(): string {
@@ -361,4 +542,36 @@ function buildLaunchdPath(): string {
   ];
 
   return [...new Set(parts)].join(path.delimiter);
+}
+
+function buildWindowsTaskRunTarget(nodePath: string, scriptPath: string): string {
+  return `"${nodePath}" "${scriptPath}" run-due`;
+}
+
+function formatWindowsDate(date: Date): string {
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const year = `${date.getFullYear()}`;
+  return `${month}/${day}/${year}`;
+}
+
+function formatWindowsTime(date: Date): string {
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  const minute = `${date.getMinutes()}`.padStart(2, "0");
+  return `${hour}:${minute}`;
+}
+
+function parseWindowsNextRunTime(output: string): Date | undefined {
+  const line = output
+    .split("\n")
+    .map((entry) => entry.trim())
+    .find((entry) => /^Next Run Time:/i.test(entry));
+
+  if (!line) {
+    return undefined;
+  }
+
+  const value = line.replace(/^Next Run Time:\s*/i, "").trim();
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }

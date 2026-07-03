@@ -1,13 +1,15 @@
 import { AppConfigStore } from "../config/AppConfigStore.js";
+import { format } from "date-fns";
 import ora from "ora";
 
 import { createNewCodexSession } from "../codex/createSession.js";
 import { discoverSessionProviderForPreference } from "../codex/discoverSessions.js";
 import { CodexStatusUsageProvider } from "../codex/usage/CodexStatusUsageProvider.js";
+import { LoopService, formatLoopSummary } from "../loops/LoopService.js";
 import { SchedulerService } from "../scheduler/SchedulerService.js";
 import { formatScheduledTime, parseScheduledTime } from "../scheduler/timeParser.js";
 import { renderJobConfirmation, renderJobSaved, renderSessionSummary, renderWelcome } from "../ui/render.js";
-import { chooseSession, confirmResetSchedule, confirmSchedule, confirmUseStaleResetTime, promptManualSession, promptMessage, promptScheduleInput, promptScheduleMode, promptSessionPreference, promptTimeInput } from "../ui/prompts.js";
+import { chooseSession, confirmLoopCreate, confirmResetSchedule, confirmSchedule, confirmUseStaleResetTime, promptLoopCadence, promptLoopStartMode, promptManualSession, promptMessage, promptScheduleInput, promptScheduleIntent, promptScheduleMode, promptSessionPreference, promptTimeInput } from "../ui/prompts.js";
 import { theme } from "../ui/theme.js";
 import type { CodexSession, ScheduleMode, UsageSnapshot } from "../types.js";
 
@@ -43,8 +45,14 @@ export async function runScheduleCommand(): Promise<void> {
 
   console.log(renderSessionSummary(session));
 
+  const scheduleIntent = await promptScheduleIntent();
+  if (scheduleIntent === "loop") {
+    await runLoopScheduleFlow(session);
+    return;
+  }
+
   const scheduleMode = await promptScheduleMode();
-  const resolvedTiming = await resolveScheduledTiming(session, scheduleMode);
+  const resolvedTiming = await resolveScheduledTiming(session, scheduleMode, true);
   const message = resolvedTiming.message ?? await promptMessage();
   const scheduledAt = resolvedTiming.date;
 
@@ -78,9 +86,73 @@ export async function runScheduleCommand(): Promise<void> {
   );
 }
 
+async function runLoopScheduleFlow(session: CodexSession): Promise<void> {
+  const cadence = await promptLoopCadence();
+  const startMode = await promptLoopStartMode();
+  const resolvedTiming =
+    startMode === "custom"
+      ? {
+          date: parseScheduledTime(await promptTimeInput()),
+          scheduleMode: "custom" as const,
+        }
+      : await resolveLoopResetTiming(session);
+  const startAt = resolvedTiming.date.date;
+
+  console.log(theme.info("Loop message: hi"));
+  console.log(
+    theme.info(
+      `Loop cadence: ${formatLoopSummary({
+        id: "",
+        sessionId: session.id,
+        sessionLabel: session.label,
+        projectPath: session.projectPath,
+        cadence,
+        anchorAt: startAt.toISOString(),
+        message: "hi",
+        status: "active",
+        createdAt: new Date().toISOString(),
+      })}`,
+    ),
+  );
+
+  if (!(await confirmLoopCreate())) {
+    console.log(theme.warning("Loop creation cancelled."));
+    return;
+  }
+
+  const loop = await new LoopService().createLoop({
+    session,
+    cadence,
+    startAt,
+  });
+
+  console.log(theme.success(`Created loop ${loop.id}.`));
+  console.log(theme.info("This loop will keep two future `hi` jobs queued automatically."));
+}
+
+async function resolveLoopResetTiming(session: CodexSession): Promise<{
+  date: ReturnType<typeof parseScheduledTime>;
+  scheduleMode: "five_hour_reset";
+}> {
+  const resolved = await resolveScheduledTiming(session, "five_hour_reset", false);
+  const resetDate = resolved.date.date;
+  const resetTimeOnly = format(resetDate, "h:mm a");
+  const parsed = parseScheduledTime(resetTimeOnly);
+
+  console.log(
+    theme.info(`Using 5-hour reset time-of-day for loop start: ${formatScheduledTime(parsed.date)}`),
+  );
+
+  return {
+    date: parsed,
+    scheduleMode: "five_hour_reset",
+  };
+}
+
 async function resolveScheduledTiming(
   session: CodexSession,
   scheduleMode: ScheduleMode,
+  includeMessage: boolean,
 ): Promise<{
   date: ReturnType<typeof parseScheduledTime>;
   usageSnapshot?: UsageSnapshot;
@@ -88,7 +160,9 @@ async function resolveScheduledTiming(
   scheduleMode: ScheduleMode;
 }> {
   if (scheduleMode === "custom") {
-    const { timeInput, message } = await promptScheduleInput();
+    const customInput = includeMessage ? await promptScheduleInput() : undefined;
+    const timeInput = customInput?.timeInput ?? await promptTimeInput();
+    const message = customInput?.message;
     return {
       date: parseScheduledTime(timeInput),
       message,

@@ -1,5 +1,5 @@
 import { AppConfigStore } from "./config/AppConfigStore.js";
-import { createDefaultLaunchdScheduler } from "./daemon/DaemonService.js";
+import { createDefaultScheduler } from "./daemon/DaemonService.js";
 import os from "node:os";
 
 import type { DependencyCheck } from "./types.js";
@@ -23,6 +23,7 @@ export async function getDoctorReport(options?: {
     plistPath: string;
     nextRunAt?: string;
     oldPollingPlistDetected: boolean;
+    scheduler: string;
   };
   statusCheck?: {
     attempted: boolean;
@@ -32,7 +33,7 @@ export async function getDoctorReport(options?: {
 }> {
   const config = await new AppConfigStore().read();
   const jobStore = new JobStore();
-  const launchdScheduler = createDefaultLaunchdScheduler();
+  const launchdScheduler = createDefaultScheduler();
   const [nodeVersion, codexExists, tmuxExists, writable, provider] = await Promise.all([
     Promise.resolve(process.version),
     commandExists("codex"),
@@ -53,6 +54,8 @@ export async function getDoctorReport(options?: {
     ? { ...(await launchdScheduler.status()), oldPollingPlistDetected: true }
     : initialDaemonStatus;
   const resetSchedulingSupported = codexExists && tmuxExists;
+  const automaticSchedulingSupported =
+    process.platform === "darwin" || process.platform === "win32";
 
   const checks: DependencyCheck[] = [
     {
@@ -94,6 +97,16 @@ export async function getDoctorReport(options?: {
       details: resetSchedulingSupported
         ? "Supported via Codex CLI /status in a temporary hidden tmux session"
         : "Requires both codex and tmux on PATH",
+    },
+    {
+      name: "automatic scheduler",
+      ok: automaticSchedulingSupported,
+      details:
+        process.platform === "darwin"
+          ? "macOS one-shot launchd"
+          : process.platform === "win32"
+            ? "Windows one-shot Task Scheduler"
+            : "Linux currently requires manual `run-due` or external scheduling",
     },
   ];
 

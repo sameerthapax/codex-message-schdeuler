@@ -2,9 +2,10 @@ import boxen from "boxen";
 import chalk from "chalk";
 import Table from "cli-table3";
 
-import type { CodexSession, DependencyCheck, ScheduledJob, ScheduleMode } from "../types.js";
+import type { CodexSession, DependencyCheck, ScheduledJob, ScheduleMode, ScheduledLoop } from "../types.js";
 import { formatScheduledTime } from "../scheduler/timeParser.js";
 import { theme } from "./theme.js";
+import { formatLoopCadence } from "../loops/LoopService.js";
 
 export function renderWelcome(): string {
   const title = theme.title("codex-message-schdeuler");
@@ -93,9 +94,31 @@ export function renderJobsTable(jobs: ScheduledJob[]): string {
     table.push([
       job.id,
       job.status,
-      job.sessionLabel,
+      job.loopId ? `${job.sessionLabel} [loop]` : job.sessionLabel,
       formatScheduledTime(new Date(job.scheduledAt)),
       truncate(job.message, 40),
+    ]);
+  }
+
+  return table.toString();
+}
+
+export function renderLoopsTable(loops: ScheduledLoop[]): string {
+  const table = new Table({
+    head: ["Loop ID", "Status", "Session", "Cadence", "Start", "Message"],
+    style: { head: ["cyan"] },
+    wordWrap: true,
+    colWidths: [38, 12, 28, 18, 28, 12],
+  });
+
+  for (const loop of loops) {
+    table.push([
+      loop.id,
+      loop.status,
+      loop.sessionLabel,
+      formatLoopCadence(loop.cadence),
+      formatScheduledTime(new Date(loop.anchorAt)),
+      truncate(loop.message, 10),
     ]);
   }
 

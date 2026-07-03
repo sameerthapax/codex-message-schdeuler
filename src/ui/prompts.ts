@@ -1,7 +1,9 @@
 import { confirm, input, select } from "@inquirer/prompts";
 
 import type { SessionPreference } from "../config/AppConfigStore.js";
-import type { CodexSession, ScheduleMode } from "../types.js";
+import type { CodexSession, LoopCadence, ScheduleMode } from "../types.js";
+
+export type ScheduleIntent = "one_time" | "loop";
 
 export async function chooseSession(
   sessions: CodexSession[],
@@ -110,6 +112,24 @@ export async function promptScheduleMode(): Promise<ScheduleMode> {
   });
 }
 
+export async function promptScheduleIntent(): Promise<ScheduleIntent> {
+  return select({
+    message: "What do you want to do with this session?",
+    choices: [
+      {
+        value: "one_time",
+        name: "One time schedule",
+        description: "Send a single scheduled message.",
+      },
+      {
+        value: "loop",
+        name: "Re run this schedule in a loop (keep session alive)",
+        description: "Keep two future `hi` jobs queued automatically.",
+      },
+    ],
+  });
+}
+
 export async function promptMessage(): Promise<string> {
   return input({
     message: "What message should Codex receive?",
@@ -128,6 +148,54 @@ export async function confirmUseStaleResetTime(): Promise<boolean> {
   return confirm({
     message:
       "Codex says limits may be stale. Use the parsed reset time anyway? Choose no to fall back to custom time.",
+    default: true,
+  });
+}
+
+export async function promptLoopCadence(): Promise<LoopCadence> {
+  return select({
+    message: "Loop cadence",
+    choices: [
+      {
+        value: "every_5_hours",
+        name: "Every 5 hours",
+        description: "Send `hi` every 5 hours after the chosen start time.",
+      },
+      {
+        value: "daily",
+        name: "Daily",
+        description: "Send `hi` every day at the chosen local time.",
+      },
+      {
+        value: "weekly",
+        name: "Weekly",
+        description: "Send `hi` every week at the chosen local time.",
+      },
+    ],
+  });
+}
+
+export async function promptLoopStartMode(): Promise<"custom" | "five_hour_reset"> {
+  return select({
+    message: "First loop run timing",
+    choices: [
+      {
+        value: "custom",
+        name: "Send at custom time",
+        description: "Enter the first local time manually, for example 05:01 pm.",
+      },
+      {
+        value: "five_hour_reset",
+        name: "Send when my 5-hour limit resets",
+        description: "Reads Codex CLI /status from the selected session and uses only the reset time-of-day.",
+      },
+    ],
+  });
+}
+
+export async function confirmLoopCreate(): Promise<boolean> {
+  return confirm({
+    message: "Create this loop?",
     default: true,
   });
 }

@@ -65,6 +65,7 @@ describe("SchedulerService", () => {
       store,
       tmuxRunner as never,
       { refreshSchedule } as never,
+      { replenishDueLoops: vi.fn(async () => undefined) } as never,
     );
 
     const jobs = await service.runDueJobs(new Date("2026-07-02T05:02:00.000Z"));

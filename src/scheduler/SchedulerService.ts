@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import type { CodexSession, ScheduledJob, ScheduleMode, UsageSnapshot } from "../types.js";
 import { resolveResumeTarget } from "../codex/CodexRunner.js";
-import { createDefaultLaunchdScheduler, type LaunchdScheduler } from "../daemon/DaemonService.js";
+import { createDefaultScheduler, type SchedulerAdapter } from "../daemon/DaemonService.js";
+import { LoopService } from "../loops/LoopService.js";
 import { JobStore } from "./JobStore.js";
 import { TmuxRunner } from "../tmux/TmuxRunner.js";
 import { logLine } from "../utils/logger.js";
@@ -15,7 +16,8 @@ export class SchedulerService {
   constructor(
     private readonly jobStore = new JobStore(),
     private readonly tmuxRunner = new TmuxRunner(),
-    private readonly launchdScheduler: LaunchdScheduler = createDefaultLaunchdScheduler(),
+    private readonly launchdScheduler: SchedulerAdapter = createDefaultScheduler(),
+    private readonly loopService = new LoopService(),
   ) {}
 
   async scheduleJob(input: {
@@ -71,6 +73,7 @@ export class SchedulerService {
       completed.push(await this.runSingleJob(job));
     }
 
+    await this.loopService.replenishDueLoops(now).catch(() => undefined);
     await this.launchdScheduler.refreshSchedule().catch(() => undefined);
 
     return completed;

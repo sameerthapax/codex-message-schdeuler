@@ -214,4 +214,40 @@ describe("DaemonService", () => {
     expect(plist).toContain("StartCalendarInterval");
     expect(plist).not.toContain("StartInterval");
   });
+
+  test("windows scheduler creates one-shot schtasks entry", async () => {
+    const { JobStore } = await import("../scheduler/JobStore.js");
+    const { WindowsTaskScheduler } = await import("./DaemonService.js");
+    const commands: string[] = [];
+    const store = new JobStore();
+    await store.saveAll([
+      {
+        id: "job-win-1",
+        sessionId: "session-1",
+        sessionLabel: "Session 1",
+        message: "hello",
+        scheduledAt: "2026-07-03T10:01:00.000Z",
+        status: "pending",
+        createdAt: "2026-07-03T09:00:00.000Z",
+      },
+    ]);
+
+    const scheduler = new WindowsTaskScheduler({
+      platform: "win32",
+      scriptPath: "C:\\codex-message-schdeuler\\dist\\cli.js",
+      nodePath: "C:\\Program Files\\nodejs\\node.exe",
+      jobStore: store,
+      runCommandFn: async (_command, args) => {
+        commands.push(args.join(" "));
+        return { exitCode: 0, stdout: "SUCCESS", stderr: "" };
+      },
+      logFn: async () => undefined,
+    });
+
+    await scheduler.refreshSchedule();
+
+    expect(commands.some((entry) => entry.includes("/Create"))).toBe(true);
+    expect(commands.some((entry) => entry.includes("/SC ONCE"))).toBe(true);
+    expect(commands.some((entry) => entry.includes("/TR"))).toBe(true);
+  });
 });

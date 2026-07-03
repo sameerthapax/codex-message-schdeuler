@@ -3,7 +3,7 @@ import { theme } from "../ui/theme.js";
 
 export async function runInstallDaemonCommand(): Promise<void> {
   const result = await installDaemonForCurrentCli();
-  console.log(theme.success("launchd scheduling refreshed."));
+  console.log(theme.success("Automatic scheduling refreshed."));
   console.log(theme.info(result.message));
-  console.log(theme.muted(`Plist: ${result.plistPath}`));
+  console.log(theme.muted(`Target: ${result.plistPath}`));
 }

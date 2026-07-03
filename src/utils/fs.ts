@@ -11,6 +11,7 @@ const resolvedAppDir = configuredAppDir
 
 export const APP_DIR = resolvedAppDir;
 export const JOBS_FILE = path.join(resolvedAppDir, "jobs.json");
+export const LOOPS_FILE = path.join(resolvedAppDir, "loops.json");
 export const LOG_DIR = path.join(resolvedAppDir, "logs");
 export const TMP_DIR = path.join(resolvedAppDir, ".tmp");
 

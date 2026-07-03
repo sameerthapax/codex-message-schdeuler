@@ -9,10 +9,11 @@ export async function runDoctorCommand(options?: { statusCheck?: boolean }): Pro
   console.log(theme.info(`Next pending job: ${report.nextPendingJobTime || "none"}`));
   console.log(theme.info(`Session provider: ${report.providerName}`));
   console.log(theme.info(`Session preference: ${report.sessionPreference}`));
-  console.log(theme.info(`macOS launchd mode: ${report.daemonStatus.mode}`));
-  console.log(theme.info(`launchd armed: ${report.daemonStatus.armed ? "yes" : "no"}`));
-  console.log(theme.info(`launchd next run: ${report.daemonStatus.nextRunAt || "none"}`));
-  console.log(theme.info(`launchd plist: ${report.daemonStatus.plistPath}`));
+  console.log(theme.info(`Scheduler backend: ${report.daemonStatus.scheduler}`));
+  console.log(theme.info(`Scheduler mode: ${report.daemonStatus.mode}`));
+  console.log(theme.info(`Scheduler armed: ${report.daemonStatus.armed ? "yes" : "no"}`));
+  console.log(theme.info(`Scheduler next run: ${report.daemonStatus.nextRunAt || "none"}`));
+  console.log(theme.info(`Scheduler target: ${report.daemonStatus.plistPath}`));
   if (report.statusCheck) {
     console.log(
       report.statusCheck.ok

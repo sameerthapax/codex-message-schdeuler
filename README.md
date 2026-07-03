@@ -9,8 +9,10 @@ Unofficial local scheduler for Codex CLI. Not affiliated with, endorsed by, or m
 - Lists locally discoverable Codex sessions
 - Lets you choose a session, create a new one, or enter one manually
 - Lets you schedule by custom local time, 5-hour reset, or weekly reset
+- Lets you create recurring loops that automatically send `hi`
 - Stores scheduled jobs locally
 - On macOS, arms a one-shot launchd timer for the exact next pending job
+- On Windows, arms a one-shot Task Scheduler task for the exact next pending job
 - At due time, resumes Codex inside tmux, injects the message, verifies submission, and writes logs
 
 ## Why it exists
@@ -29,6 +31,8 @@ Codex CLI is good at active work, but it does not natively provide a simple “s
 - Codex CLI installed and already authenticated locally
 - `tmux` installed locally
 - macOS for automatic one-shot launchd scheduling
+- Windows for automatic one-shot Task Scheduler scheduling
+- Linux currently requires manual `run-due` or an external scheduler
 
 ## Installation
 
@@ -47,8 +51,11 @@ Compatibility note:
 ```bash
 codex-message-schdeuler
 codex-message-schdeuler schedule
+codex-message-schdeuler loop
+codex-message-schdeuler loops
 codex-message-schdeuler jobs
 codex-message-schdeuler cancel <jobId>
+codex-message-schdeuler cancel-loop <loopId>
 codex-message-schdeuler doctor
 ```
 
@@ -65,6 +72,14 @@ Typical flow:
 6. If you choose a reset mode, the tool resumes the selected session in hidden tmux, runs `/status`, parses the reset time, and asks you to confirm it.
 7. Enter the message.
 8. Confirm the job.
+
+Recurring loop flow:
+
+1. Run `codex-message-schdeuler loop`.
+2. Choose a session.
+3. Choose a cadence: every 5 hours, daily, or weekly.
+4. Choose the first run time.
+5. The loop automatically sends `hi` and keeps two future loop jobs queued for that session.
 
 Example reset-based flow:
 
@@ -93,23 +108,26 @@ End-to-end architecture:
 1. Session discovery
 2. Local job storage
 3. Optional Codex CLI `/status` usage capture for reset-based scheduling
-4. One-shot launchd scheduling on macOS
-5. `run-due` at the exact next due time
-6. tmux-hosted `codex resume`
-7. Message injection and submission verification
-8. Per-job logs and status updates
+4. Optional recurring loop expansion into future jobs
+5. One-shot OS-specific scheduling
+6. `run-due` at the exact next due time
+7. tmux-hosted `codex resume`
+8. Message injection and submission verification
+9. Per-job logs and status updates
 
 Detailed runtime path:
 
 1. The interactive CLI discovers sessions from `~/.codex/sessions/**/*.jsonl`.
 2. If you choose a reset-based schedule mode, the tool resumes the selected session in hidden tmux, sends `/status`, captures the pane output, and parses reset times locally.
-3. A scheduled job is stored locally in JSON.
-4. The daemon service finds the earliest pending job.
-5. On macOS it writes a one-shot launchd plist with `StartCalendarInterval`.
-6. launchd invokes `codex-message-schdeuler run-due` only when that next job is due.
-7. `run-due` executes all pending jobs whose `scheduledAt <= now`.
-8. Each due job creates a detached tmux session, runs `codex resume`, injects the message, and checks that the draft prompt actually cleared.
-9. After execution, launchd is re-armed for the next future pending job, or fully disarmed if none remain.
+3. A scheduled job or loop is stored locally in JSON.
+4. Active loops keep exactly two future pending loop jobs queued, each sending `hi`.
+5. The daemon service finds the earliest pending job.
+6. On macOS it writes a one-shot launchd plist with `StartCalendarInterval`, and on Windows it creates a one-shot Task Scheduler entry.
+7. The OS scheduler invokes `codex-message-schdeuler run-due` only when that next job is due.
+8. `run-due` executes all pending jobs whose `scheduledAt <= now`.
+9. After due jobs run, active loops are replenished back to two future jobs.
+10. Each due job creates a detached tmux session, runs `codex resume`, injects the message, and checks that the draft prompt actually cleared.
+11. After execution, launchd is re-armed for the next future pending job, or fully disarmed if none remain.
 
 Reset-based scheduling notes:
 
@@ -118,15 +136,15 @@ Reset-based scheduling notes:
 - The tool does not scrape chatgpt.com.
 - If Codex says limits may be stale, the CLI warns you and lets you continue or fall back to custom time.
 
-## Efficient macOS daemon behavior
+## Efficient automatic scheduling
 
-`codex-message-schdeuler` does not keep an always-running background daemon on macOS.
+`codex-message-schdeuler` does not keep an always-running background worker on supported operating systems.
 
 Instead:
 
 - No worker polls every minute by default.
-- launchd is armed only for the next pending job.
-- When there are no pending jobs, launchd is disarmed and no background worker remains active.
+- The OS scheduler is armed only for the next pending job.
+- When there are no pending jobs, the scheduled entry is removed and no background worker remains active.
 
 Manual fallback always remains available:
 
@@ -139,8 +157,11 @@ codex-message-schdeuler run-due
 ```bash
 codex-message-schdeuler
 codex-message-schdeuler schedule
+codex-message-schdeuler loop
+codex-message-schdeuler loops
 codex-message-schdeuler jobs
 codex-message-schdeuler cancel <jobId>
+codex-message-schdeuler cancel-loop <loopId>
 codex-message-schdeuler run-due
 codex-message-schdeuler doctor
 codex-message-schdeuler doctor --status-check
@@ -150,12 +171,15 @@ codex-message-schdeuler install-daemon
 Command notes:
 
 - `schedule`: interactive flow
+- `loop`: create an automatic recurring `hi` loop
+- `loops`: list configured loops
 - `jobs`: list stored jobs
 - `cancel <jobId>`: cancel a pending job
+- `cancel-loop <loopId>`: cancel a loop and its pending generated jobs
 - `run-due`: run all due jobs now and refresh scheduling
-- `doctor`: inspect local dependencies, storage, next pending job, and launchd status
+- `doctor`: inspect local dependencies, storage, next pending job, and automatic scheduler status
 - `doctor --status-check`: explicitly run Codex `/status` against a real session to verify reset-based scheduling
-- `install-daemon`: refresh one-shot macOS launchd scheduling for the next pending job
+- `install-daemon`: refresh one-shot automatic scheduling for the next pending job
 
 ## Storage locations
 
