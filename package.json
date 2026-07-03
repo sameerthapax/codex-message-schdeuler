@@ -1,6 +1,6 @@
 {
   "name": "codex-message-schdeuler",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Unofficial local scheduler for Codex CLI sessions using tmux and one-shot launchd scheduling.",
   "license": "MIT",
   "type": "module",
