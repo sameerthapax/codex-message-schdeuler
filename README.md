@@ -2,22 +2,17 @@
 
 Unofficial local scheduler for Codex CLI. Not affiliated with, endorsed by, or maintained by OpenAI.
 
-`codex-message-schdeuler` schedules a future message to a local Codex CLI session. Users choose Codex sessions, not tmux sessions. tmux is only local execution infrastructure used when a scheduled job actually runs.
+`codex-message-schdeuler` lets you schedule messages for local Codex sessions, or keep a session warm with recurring looped `hi` messages. Users choose Codex sessions, not tmux sessions. tmux is only local execution infrastructure used when a scheduled job actually runs.
 
 ## What it does
 
 - Lists locally discoverable Codex sessions
 - Lets you choose a session, create a new one, or enter one manually
-- Lets you schedule by custom local time, 5-hour reset, or weekly reset
-- Lets you create recurring loops that automatically send `hi`
-- Stores scheduled jobs locally
-- On macOS, arms a one-shot launchd timer for the exact next pending job
-- On Windows, arms a one-shot Task Scheduler task for the exact next pending job
-- At due time, resumes Codex inside tmux, injects the message, verifies submission, and writes logs
-
-## Why it exists
-
-Codex CLI is good at active work, but it does not natively provide a simple “send this exact message to this exact session later” flow. This tool fills that gap with a local scheduler and a session-first terminal UI.
+- Supports one-time scheduling and recurring loops
+- Supports custom local times and Codex 5-hour reset based starts
+- Stores jobs and loops locally
+- Uses one-shot automatic scheduling on macOS and Windows
+- Resumes Codex in tmux only when a job is actually due
 
 ## Disclaimer
 
@@ -30,7 +25,7 @@ Codex CLI is good at active work, but it does not natively provide a simple “s
 - Node.js `>=18.17.0`
 - Codex CLI installed and already authenticated locally
 - `tmux` installed locally
-- macOS for automatic one-shot launchd scheduling
+- macOS for automatic one-shot `launchd` scheduling
 - Windows for automatic one-shot Task Scheduler scheduling
 - Linux currently requires manual `run-due` or an external scheduler
 
@@ -59,84 +54,99 @@ codex-message-schdeuler cancel-loop <loopId>
 codex-message-schdeuler doctor
 ```
 
-Typical flow:
+## Main flow
 
-1. Run `codex-message-schdeuler`.
-2. Choose whether you mainly use Codex CLI or Codex app sessions.
-3. Pick a discovered session, create a new session, or enter one manually.
-4. Choose one of:
+When you run:
+
+```bash
+codex-message-schdeuler
+```
+
+the CLI flow is:
+
+1. Choose whether you mainly use Codex CLI or Codex app sessions.
+2. Select a discovered session, create a new session, or enter one manually.
+3. Choose:
+   - `One time schedule`
+   - `Re run this schedule in a loop (keep session alive)`
+
+### One-time schedule flow
+
+1. Choose:
    - `Send at custom time`
    - `Send when my 5-hour limit resets`
    - `Send when my weekly limit resets`
-5. If you choose custom time, enter a local future time such as `05:01 pm`.
-6. If you choose a reset mode, the tool resumes the selected session in hidden tmux, runs `/status`, parses the reset time, and asks you to confirm it.
-7. Enter the message.
-8. Confirm the job.
+2. If you choose custom time, enter a local future time such as `05:01 pm`.
+3. If you choose a reset mode, the tool resumes the selected session in hidden tmux, runs `/status`, parses the reset time, and asks you to confirm it.
+4. Enter the message.
+5. Confirm the job.
 
-Recurring loop flow:
+### Loop flow
 
-1. Run `codex-message-schdeuler loop`.
-2. Choose a session.
-3. Choose a cadence: every 5 hours, daily, or weekly.
-4. Choose the first run time.
-5. The loop automatically sends `hi` and keeps two future loop jobs queued for that session.
+1. Choose loop cadence:
+   - `Every 5 hours`
+   - `Daily`
+   - `Weekly`
+2. Choose the first loop run timing:
+   - `Send at custom time`
+   - `Send when my 5-hour limit resets`
+3. Loop messages are always `hi`.
+4. The loop keeps exactly two future pending loop jobs queued automatically.
 
-Example reset-based flow:
+Important loop rule:
+
+- If you start a loop from the 5-hour reset option, the tool uses only the reset time-of-day, not the full reset date.
+- That keeps the loop anchored to a recurring time instead of inheriting a one-off date from `/status`.
+
+## Reset-based scheduling
+
+Reset-based scheduling uses Codex CLI `/status`.
+
+- It does not call undocumented web APIs.
+- It does not scrape chatgpt.com.
+- It does not store auth tokens.
+- If Codex says limits may be stale, the CLI warns you and lets you continue or fall back to custom time.
+
+Example `/status`-based use:
 
 ```text
 codex-message-schdeuler
 
 Choose:
+One time schedule
+
+Then:
 Send when my 5-hour limit resets
-
-Then enter:
-continue the refactor and run tests
 ```
-
-## User-facing model
-
-The user interacts with Codex sessions, not tmux sessions.
-
-- Session discovery is best-effort from local Codex metadata.
-- tmux is never the primary user-facing abstraction.
-- tmux exists only so the scheduler can resume Codex in a detached terminal and inject the message later.
 
 ## How it works
 
-End-to-end architecture:
+End-to-end:
 
 1. Session discovery
-2. Local job storage
-3. Optional Codex CLI `/status` usage capture for reset-based scheduling
-4. Optional recurring loop expansion into future jobs
-5. One-shot OS-specific scheduling
-6. `run-due` at the exact next due time
+2. Local job or loop storage
+3. Optional Codex CLI `/status` capture for reset-based timing
+4. Loop expansion into future `hi` jobs when loops are active
+5. One-shot OS scheduler arms for the next pending job
+6. `run-due` executes due jobs
 7. tmux-hosted `codex resume`
 8. Message injection and submission verification
-9. Per-job logs and status updates
+9. Logs and status updates
 
-Detailed runtime path:
+Runtime path:
 
-1. The interactive CLI discovers sessions from `~/.codex/sessions/**/*.jsonl`.
-2. If you choose a reset-based schedule mode, the tool resumes the selected session in hidden tmux, sends `/status`, captures the pane output, and parses reset times locally.
-3. A scheduled job or loop is stored locally in JSON.
+1. The interactive CLI discovers sessions from local Codex metadata.
+2. If reset timing is chosen, the tool resumes the selected session in hidden tmux, sends `/status`, captures the pane output, and parses reset times locally.
+3. A one-time job or loop definition is stored locally in JSON.
 4. Active loops keep exactly two future pending loop jobs queued, each sending `hi`.
-5. The daemon service finds the earliest pending job.
-6. On macOS it writes a one-shot launchd plist with `StartCalendarInterval`, and on Windows it creates a one-shot Task Scheduler entry.
+5. The scheduler backend finds the earliest pending job.
+6. On macOS it writes a one-shot `launchd` plist. On Windows it creates a one-shot Task Scheduler entry.
 7. The OS scheduler invokes `codex-message-schdeuler run-due` only when that next job is due.
 8. `run-due` executes all pending jobs whose `scheduledAt <= now`.
 9. After due jobs run, active loops are replenished back to two future jobs.
-10. Each due job creates a detached tmux session, runs `codex resume`, injects the message, and checks that the draft prompt actually cleared.
-11. After execution, launchd is re-armed for the next future pending job, or fully disarmed if none remain.
+10. Each due job creates a detached tmux session, runs `codex resume`, injects the message, and verifies that the prompt actually advanced.
 
-Reset-based scheduling notes:
-
-- Reset times come from Codex CLI `/status`.
-- The tool does not call undocumented web APIs.
-- The tool does not scrape chatgpt.com.
-- If Codex says limits may be stale, the CLI warns you and lets you continue or fall back to custom time.
-
-## Efficient automatic scheduling
+## Automatic scheduling
 
 `codex-message-schdeuler` does not keep an always-running background worker on supported operating systems.
 
@@ -144,7 +154,13 @@ Instead:
 
 - No worker polls every minute by default.
 - The OS scheduler is armed only for the next pending job.
-- When there are no pending jobs, the scheduled entry is removed and no background worker remains active.
+- When there are no pending jobs, the scheduled entry is removed.
+
+Automatic scheduler backends:
+
+- macOS: one-shot `launchd`
+- Windows: one-shot Task Scheduler
+- Linux: currently manual `run-due` or external scheduler only
 
 Manual fallback always remains available:
 
@@ -170,29 +186,29 @@ codex-message-schdeuler install-daemon
 
 Command notes:
 
-- `schedule`: interactive flow
-- `loop`: create an automatic recurring `hi` loop
+- `schedule`: open the interactive scheduling flow
+- `loop`: directly create a recurring `hi` loop
 - `loops`: list configured loops
 - `jobs`: list stored jobs
 - `cancel <jobId>`: cancel a pending job
 - `cancel-loop <loopId>`: cancel a loop and its pending generated jobs
-- `run-due`: run all due jobs now and refresh scheduling
-- `doctor`: inspect local dependencies, storage, next pending job, and automatic scheduler status
-- `doctor --status-check`: explicitly run Codex `/status` against a real session to verify reset-based scheduling
+- `run-due`: run all due jobs now and refresh automatic scheduling
+- `doctor`: inspect dependencies, storage, next pending job, and scheduler backend status
+- `doctor --status-check`: explicitly run Codex `/status` against a real session
 - `install-daemon`: refresh one-shot automatic scheduling for the next pending job
 
 ## Storage locations
 
-Default storage remains:
+Default storage:
 
 ```text
 ~/.codex-message-scheduler/
 ```
 
-Compatibility note:
+Compatibility behavior:
 
 - New installs default to `~/.codex-message-scheduler/`
-- If an existing `~/.codex-scheduler/` directory is present and the new directory does not exist yet, the CLI continues using the legacy path automatically
+- If an existing `~/.codex-scheduler/` directory exists and the new directory does not yet exist, the CLI continues using the legacy directory automatically
 
 Environment overrides:
 
@@ -203,6 +219,7 @@ Environment overrides:
 Stored files:
 
 - `~/.codex-message-scheduler/jobs.json`
+- `~/.codex-message-scheduler/loops.json`
 - `~/.codex-message-scheduler/config.json`
 - `~/.codex-message-scheduler/logs/<jobId>.log`
 - `~/.codex-message-scheduler/runtime.log`
@@ -217,113 +234,65 @@ Stored files:
 - No undocumented web APIs are called.
 - No chatgpt.com scraping is performed.
 - No telemetry, analytics, crash reporting, or hidden network calls are implemented.
-- Scheduled messages stay local on disk in the app data directory.
+- Scheduled messages and loop metadata stay local on disk.
 - tmux execution is local only.
 - Session discovery is local only and uses best-effort local Codex metadata.
-- The package does not sync data to any cloud service.
 - Do not schedule secrets unless you are comfortable storing them locally.
-
-## Safety review summary
-
-Publish-safety audit findings:
-
-- No token storage logic is present.
-- No HTTP client, fetch-based API call, telemetry SDK, or external reporting path is present.
-- Session discovery does not hardcode one private machine path; it uses the current user home directory and Codex metadata paths.
-- The worker uses `spawn` / argument arrays rather than shell interpolation for tmux and launchctl execution.
-- tmux and Codex commands are executed locally only.
-- Published files are allowlisted through `package.json#files`.
-
-Remaining caution:
-
-- This tool stores scheduled message content in plain text locally by design.
-- It depends on Codex CLI and terminal UI behavior, which may change over time.
-
-## launchd naming and migration
-
-Current launchd label:
-
-- `com.codex-message-schdeuler.agent`
-
-Legacy migration:
-
-- Older versions used `com.codex.scheduler`
-- Older polling builds used `StartInterval=60`
-- Current versions detect and replace the old polling plist on `schedule`, `doctor`, `install-daemon`, or `run-due`
 
 ## Limitations
 
 - Session discovery is best-effort and depends on local Codex metadata layout.
-- Reset-based scheduling depends on Codex CLI `/status` output remaining parseable.
-- Codex may report that limits are stale, and those reset times may lag briefly.
-- Codex UI readiness detection is heuristic.
-- tmux and terminal UI submission behavior can still be sensitive to upstream CLI changes.
-- macOS one-shot launchd scheduling is the primary automatic background mode.
-- Other operating systems may need manual `run-due` usage or an external scheduler.
-- launchd timing is minute-resolution because `StartCalendarInterval` is minute-based.
+- Reset-based scheduling depends on Codex CLI `/status` remaining parseable.
+- tmux is required for execution and `/status` capture.
+- Native Windows still depends on having a tmux-capable environment.
+- Linux automatic one-shot scheduling is not implemented yet.
+- Codex UI readiness detection and prompt submission are still heuristic because they depend on upstream terminal behavior.
 
 ## Troubleshooting
 
-### tmux not found
+### Missing dependencies on first run
 
-- Run `codex-message-schdeuler doctor`
-- Ensure `tmux` is installed
-- Refresh launchd after install:
-
-```bash
-codex-message-schdeuler install-daemon
-```
-
-### codex not found
-
-- Ensure the Codex CLI is installed and available locally
-- If you installed it through a version manager, rerun:
-
-```bash
-codex-message-schdeuler install-daemon
-```
-
-### no sessions found
-
-- Use manual session entry
-- Or choose `Create new session`
-- Session discovery is best-effort from local Codex transcript files
-
-### reset time could not be parsed
-
-- Retry after running `/status` manually in Codex once
-- Use `codex-message-schdeuler doctor --status-check` for an explicit live verification
-- Fall back to custom time if Codex changes its `/status` format
-
-### launchd not armed
-
+- The CLI now blocks normal interactive use if required runtime dependencies are missing.
 - Run:
 
 ```bash
 codex-message-schdeuler doctor
-codex-message-schdeuler install-daemon
 ```
 
-- If there are no pending jobs, launchd should be disarmed by design
+### tmux not found
 
-### message appears in draft but did not submit
+- Install `tmux`
+- On Windows, this usually means using WSL or another Unix-like environment
 
-- Inspect the per-job log:
+### codex not found
+
+- Ensure the Codex CLI is installed and available on `PATH`
+
+### reset time could not be parsed
+
+- Retry after running `/status` manually in Codex once
+- Use:
 
 ```bash
-cat ~/.codex-message-scheduler/logs/<jobId>.log
+codex-message-schdeuler doctor --status-check
 ```
 
-- The job will fail rather than falsely report success if the active prompt still contains the unsent draft
+- Fall back to custom time if Codex changes its `/status` format
 
-### permission or path issues
+### launchd or Task Scheduler is not armed
 
-- Confirm the app data directory is writable
-- Check:
+- Run:
+
+```bash
+codex-message-schdeuler install-daemon
+codex-message-schdeuler doctor
+```
+
+### inspect logs
 
 ```bash
 cat ~/.codex-message-scheduler/runtime.log
-cat ~/.codex-message-scheduler/launchd.stderr.log
+cat ~/.codex-message-scheduler/logs/<jobId>.log
 ```
 
 ## Development
@@ -334,32 +303,6 @@ npm run build
 npm run typecheck
 npm test
 ```
-
-## Publishing checklist
-
-- Confirm package name and bin names are correct
-- Run `npm run build`
-- Run `npm run typecheck`
-- Run `npm test`
-- Run `npm pack --dry-run`
-- Verify only `dist`, `README.md`, and `LICENSE` are published
-- Verify no local logs, configs, or machine-specific artifacts are included
-
-## Credits
-
-Thanks to the major packages this tool builds on:
-
-- TypeScript
-- Commander
-- `@inquirer/prompts`
-- chalk
-- ora
-- boxen
-- `cli-table3`
-- chrono-node
-- date-fns
-- Vitest
-- tsx
 
 ## License
 
