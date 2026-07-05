@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { CodexSession, ScheduledJob, ScheduleMode, UsageSnapshot } from "../types.js";
+import type { CodexSession, ScheduledJob, ScheduleMode, SleepPolicy, UsageSnapshot } from "../types.js";
 import { resolveResumeTarget } from "../codex/CodexRunner.js";
 import { createDefaultScheduler, type SchedulerAdapter } from "../daemon/DaemonService.js";
 import { LoopService } from "../loops/LoopService.js";
@@ -11,6 +11,8 @@ import { logLine } from "../utils/logger.js";
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+const SLEEP_SKIP_GRACE_MS = 15 * 60 * 1000;
 
 export class SchedulerService {
   constructor(
@@ -26,6 +28,7 @@ export class SchedulerService {
     scheduledAt: Date;
     scheduleMode?: ScheduleMode;
     usageSnapshot?: UsageSnapshot;
+    sleepPolicy?: SleepPolicy;
   }): Promise<ScheduledJob> {
     const job: ScheduledJob = {
       id: randomUUID(),
@@ -38,6 +41,7 @@ export class SchedulerService {
       createdAt: new Date().toISOString(),
       scheduleMode: input.scheduleMode ?? "custom",
       usageSnapshot: input.usageSnapshot,
+      sleepPolicy: input.sleepPolicy ?? "wake_mac_if_possible",
     };
 
     await this.jobStore.create(job);
@@ -65,18 +69,59 @@ export class SchedulerService {
     return cancelled;
   }
 
-  async runDueJobs(now = new Date()): Promise<ScheduledJob[]> {
+  async runDueJobs(
+    now = new Date(),
+    options: { refreshSchedule?: boolean } = {},
+  ): Promise<ScheduledJob[]> {
     const dueJobs = await this.jobStore.pendingDue(now);
     const completed: ScheduledJob[] = [];
 
     for (const job of dueJobs) {
+      if (shouldSkipForCatchUpOnWake(job, now)) {
+        completed.push(await this.skipSingleJob(job, now));
+        continue;
+      }
+
       completed.push(await this.runSingleJob(job));
     }
 
-    await this.loopService.replenishDueLoops(now).catch(() => undefined);
-    await this.launchdScheduler.refreshSchedule().catch(() => undefined);
+    await this.loopService.replenishDueLoops(now, {
+      refreshSchedule: options.refreshSchedule,
+    }).catch(() => undefined);
+    if (options.refreshSchedule !== false) {
+      await this.launchdScheduler.refreshSchedule().catch(() => undefined);
+    }
 
     return completed;
+  }
+
+  private async skipSingleJob(job: ScheduledJob, now: Date): Promise<ScheduledJob> {
+    const overdueMs = Math.max(0, now.getTime() - new Date(job.scheduledAt).getTime());
+    const reason = `Skipped because the job was overdue by ${formatDuration(overdueMs)} and sleep policy is catch_up_on_wake.`;
+    const updated = await this.jobStore.update(job.id, (current) => ({
+      ...current,
+      status: "skipped_due_to_mac_sleep",
+      error: reason,
+    }));
+
+    await this.tmuxRunner.persistExecutionLog({
+      jobId: job.id,
+      tmuxSessionName: job.tmuxSessionName || "(not started)",
+      sessionId: job.sessionId,
+      sessionLabel: job.sessionLabel,
+      projectPath: job.projectPath,
+      scheduledAt: job.scheduledAt,
+      message: job.message,
+      sleepPolicy: job.sleepPolicy,
+      status: "skipped_due_to_mac_sleep",
+      error: reason,
+      skipReason: reason,
+      readySnapshot: "",
+      postSendSnapshot: "",
+    });
+
+    await logLine(`Skipped job ${job.id}: ${reason}`);
+    return updated;
   }
 
   private async runSingleJob(job: ScheduledJob): Promise<ScheduledJob> {
@@ -106,10 +151,37 @@ export class SchedulerService {
 
       await this.tmuxRunner.startDetachedSession(tmuxSessionName, codexArgs, target.projectPath);
       readySnapshot = await this.tmuxRunner.waitForReady(tmuxSessionName);
-      const submission = await this.tmuxRunner.sendMessage(tmuxSessionName, job.message);
+      const submission = await this.tmuxRunner.sendMessage(tmuxSessionName, job.message, readySnapshot);
       submitKey = submission.submitKey;
       await sleep(1000);
       const postSendSnapshot = submission.snapshot;
+
+      if (!submission.accepted) {
+        const updated = await this.jobStore.update(job.id, (current) => ({
+          ...current,
+          status: "not_sure",
+          error: submission.acceptanceReason,
+        }));
+
+        await this.tmuxRunner.persistExecutionLog({
+          jobId: job.id,
+          tmuxSessionName,
+          sessionId: job.sessionId,
+          sessionLabel: job.sessionLabel,
+          projectPath: job.projectPath,
+          scheduledAt: job.scheduledAt,
+          message: job.message,
+          sleepPolicy: job.sleepPolicy,
+          readySnapshot,
+          postSendSnapshot: `${postSendSnapshot}\n\n[submitKey=${submitKey}]`,
+          status: "not_sure",
+          error: submission.acceptanceReason,
+          deliveryEvidence: submission.acceptanceReason,
+        });
+
+        await logLine(`Not sure whether job ${job.id} was accepted by Codex: ${submission.acceptanceReason}`);
+        return updated;
+      }
 
       const updated = await this.jobStore.update(job.id, (current) => ({
         ...current,
@@ -127,9 +199,11 @@ export class SchedulerService {
         scheduledAt: job.scheduledAt,
         sentAt: updated.sentAt,
         message: job.message,
+        sleepPolicy: job.sleepPolicy,
         readySnapshot,
         postSendSnapshot: `${postSendSnapshot}\n\n[submitKey=${submitKey}]`,
         status: "sent",
+        deliveryEvidence: submission.acceptanceReason,
       });
 
       await logLine(`Sent job ${job.id}`);
@@ -154,6 +228,7 @@ export class SchedulerService {
         projectPath: job.projectPath,
         scheduledAt: job.scheduledAt,
         message: job.message,
+        sleepPolicy: job.sleepPolicy,
         readySnapshot,
         postSendSnapshot: postFailureSnapshot,
         status: "failed",
@@ -164,4 +239,28 @@ export class SchedulerService {
       return updated;
     }
   }
+}
+
+function shouldSkipForCatchUpOnWake(job: ScheduledJob, now: Date): boolean {
+  if (job.sleepPolicy !== "catch_up_on_wake") {
+    return false;
+  }
+
+  return now.getTime() - new Date(job.scheduledAt).getTime() > SLEEP_SKIP_GRACE_MS;
+}
+
+function formatDuration(durationMs: number): string {
+  const totalMinutes = Math.max(1, Math.round(durationMs / 60000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+
+  if (hours === 0) {
+    return `${totalMinutes} minute${totalMinutes === 1 ? "" : "s"}`;
+  }
+
+  if (minutes === 0) {
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+
+  return `${hours} hour${hours === 1 ? "" : "s"} ${minutes} minute${minutes === 1 ? "" : "s"}`;
 }

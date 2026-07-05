@@ -1,7 +1,14 @@
-export type JobStatus = "pending" | "sent" | "failed" | "cancelled";
+export type JobStatus =
+  | "pending"
+  | "sent"
+  | "not_sure"
+  | "failed"
+  | "cancelled"
+  | "skipped_due_to_mac_sleep";
 export type ScheduleMode = "custom" | "five_hour_reset" | "weekly_reset";
 export type LoopCadence = "every_5_hours" | "daily" | "weekly";
 export type LoopStatus = "active" | "cancelled";
+export type SleepPolicy = "catch_up_on_wake" | "wake_mac_if_possible";
 
 export interface UsageSnapshot {
   fiveHourReset?: string;
@@ -29,6 +36,7 @@ export interface ScheduledJob {
   loopId?: string;
   loopCadence?: LoopCadence;
   loopOccurrenceAt?: string;
+  sleepPolicy?: SleepPolicy;
 }
 
 export interface ScheduledLoop {
@@ -42,6 +50,7 @@ export interface ScheduledLoop {
   status: LoopStatus;
   createdAt: string;
   lastEnqueuedAt?: string;
+  sleepPolicy?: SleepPolicy;
 }
 
 export interface CodexSession {

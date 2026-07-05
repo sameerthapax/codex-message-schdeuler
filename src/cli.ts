@@ -6,6 +6,7 @@ import { runCancelCommand } from "./commands/cancel.js";
 import { runCancelLoopCommand } from "./commands/cancelLoop.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { runInstallDaemonCommand } from "./commands/installDaemon.js";
+import { runInternalRefreshSchedulerCommand } from "./commands/internalRefreshScheduler.js";
 import { runJobsCommand } from "./commands/jobs.js";
 import { runLoopCommand } from "./commands/loop.js";
 import { runLoopsCommand } from "./commands/loops.js";
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
   program.command("cancel").description("Cancel a pending job.").argument("<jobId>").action(runCancelCommand);
   program.command("cancel-loop").description("Cancel a loop and its pending jobs.").argument("<loopId>").action(runCancelLoopCommand);
   program.command("run-due").description("Send all pending jobs whose scheduled time has arrived.").action(runDueCommand);
+  program.command("internal-refresh-scheduler").action(runInternalRefreshSchedulerCommand);
   program
     .command("doctor")
     .description("Check dependencies and scheduler health.")
@@ -108,7 +110,12 @@ async function ensureRequiredDependencies(): Promise<void> {
 }
 
 function shouldSkipStartupChecks(argv: string[]): boolean {
-  return argv.includes("--help") || argv.includes("-h") || argv.includes("doctor");
+  return (
+    argv.includes("--help") ||
+    argv.includes("-h") ||
+    argv.includes("doctor") ||
+    argv.includes("internal-refresh-scheduler")
+  );
 }
 
 main().catch((error) => {

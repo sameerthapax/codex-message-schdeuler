@@ -1,15 +1,17 @@
 import { readFile, rm } from "node:fs/promises";
+import { spawn } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
 
 import { JobStore } from "../scheduler/JobStore.js";
 import type { ScheduledJob } from "../types.js";
-import { APP_DIR, atomicWriteFile, pathExists } from "../utils/fs.js";
+import { APP_DIR, atomicWriteFile, atomicWriteJson, pathExists, WAKE_EVENT_FILE } from "../utils/fs.js";
 import { logLine } from "../utils/logger.js";
 import { runCommand, type CommandResult } from "../utils/shell.js";
 
 const DAEMON_LABEL = "com.codex-message-schdeuler.agent";
 const WINDOWS_TASK_NAME = "codex-message-schdeuler-agent";
+export const MANAGED_RUN_CONTEXT_ENV = "CODEX_MESSAGE_SCHEDULER_RUN_CONTEXT";
 const LEGACY_DAEMONS = [
   {
     label: "com.codex-tmux-scheduler.agent",
@@ -94,6 +96,7 @@ export class LaunchdScheduler implements SchedulerAdapter {
 
     const nextRunAt = getArmTimeForJob(nextJob);
     await this.armNextRun(nextRunAt);
+    await this.refreshWakePolicy(nextJob, nextRunAt);
     await this.logFn(`launchd scheduler armed for ${nextRunAt.toISOString()} (${nextJob.id})`);
   }
 
@@ -133,6 +136,7 @@ export class LaunchdScheduler implements SchedulerAdapter {
         await rm(legacy.plistPath, { force: true }).catch(() => undefined);
       }
     }
+    await this.clearWakeEvent().catch(() => undefined);
   }
 
   async status(): Promise<DaemonStatus> {
@@ -227,6 +231,74 @@ export class LaunchdScheduler implements SchedulerAdapter {
         }
       }
     }
+  }
+
+  private async refreshWakePolicy(job: ScheduledJob, nextRunAt: Date): Promise<void> {
+    if (job.sleepPolicy !== "wake_mac_if_possible") {
+      await this.clearWakeEvent();
+      return;
+    }
+
+    try {
+      await this.scheduleWakeEvent(nextRunAt);
+    } catch (error) {
+      await this.logFn(
+        `pmset wake scheduling failed for ${nextRunAt.toISOString()}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  private async scheduleWakeEvent(nextRunAt: Date): Promise<void> {
+    await this.clearWakeEvent();
+    const dateTime = formatPmsetDateTime(nextRunAt);
+    const owner = DAEMON_LABEL;
+    const result = await this.runCommandFn(
+      "pmset",
+      ["schedule", "wakeorpoweron", dateTime, owner],
+      { timeoutMs: 10000 },
+    ).catch((error) => ({ exitCode: 1, stdout: "", stderr: String(error) }));
+
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr.trim() || "Failed to schedule pmset wake event.");
+    }
+
+    await atomicWriteJson(WAKE_EVENT_FILE, {
+      type: "wakeorpoweron",
+      owner,
+      at: nextRunAt.toISOString(),
+    });
+  }
+
+  private async clearWakeEvent(): Promise<void> {
+    if (!(await pathExists(WAKE_EVENT_FILE))) {
+      return;
+    }
+
+    const raw = await readFile(WAKE_EVENT_FILE, "utf8").catch(() => "");
+    if (!raw) {
+      await rm(WAKE_EVENT_FILE, { force: true }).catch(() => undefined);
+      return;
+    }
+
+    const parsed = JSON.parse(raw) as { type?: string; owner?: string; at?: string };
+    if (parsed.type && parsed.at) {
+      const result = await this.runCommandFn(
+        "pmset",
+        ["schedule", "cancel", parsed.type, formatPmsetDateTime(new Date(parsed.at)), parsed.owner || DAEMON_LABEL],
+        { timeoutMs: 10000 },
+      ).catch(() => null);
+
+      if (result && result.exitCode !== 0) {
+        const stderr = result.stderr.trim();
+        if (stderr && !/not found|no scheduled events|unable/i.test(stderr)) {
+          await this.logFn(`pmset cancel warning: ${stderr}`);
+        }
+      }
+    }
+
+    await rm(WAKE_EVENT_FILE, { force: true }).catch(() => undefined);
   }
 }
 
@@ -418,6 +490,34 @@ export function createDefaultLaunchdScheduler(): LaunchdScheduler {
   return new LaunchdScheduler();
 }
 
+export function isManagedLaunchdRun(): boolean {
+  return process.platform === "darwin" && process.env[MANAGED_RUN_CONTEXT_ENV] === "launchd";
+}
+
+export async function rearmSchedulerAfterManagedRun(): Promise<void> {
+  if (!isManagedLaunchdRun()) {
+    return;
+  }
+
+  const scriptPath = process.argv[1];
+  if (!scriptPath) {
+    await logLine("Could not re-arm launchd after managed run: CLI script path is unavailable.");
+    return;
+  }
+
+  const child = spawn(process.execPath, [scriptPath, "internal-refresh-scheduler"], {
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      [MANAGED_RUN_CONTEXT_ENV]: "refresh-helper",
+    },
+  });
+  child.unref();
+
+  await logLine(`Spawned detached scheduler refresh helper (pid=${child.pid ?? "unknown"}) after launchd run.`);
+}
+
 export function createDefaultScheduler(): SchedulerAdapter {
   if (process.platform === "darwin") {
     return new LaunchdScheduler();
@@ -457,6 +557,8 @@ export function buildLaunchdPlist(nodePath: string, scriptPath: string, nextRunA
   <dict>
     <key>PATH</key>
     <string>${buildLaunchdPath()}</string>
+    <key>${MANAGED_RUN_CONTEXT_ENV}</key>
+    <string>launchd</string>
   </dict>
   <key>StartCalendarInterval</key>
   <dict>
@@ -542,6 +644,16 @@ function buildLaunchdPath(): string {
   ];
 
   return [...new Set(parts)].join(path.delimiter);
+}
+
+function formatPmsetDateTime(date: Date): string {
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const year = `${date.getFullYear()}`.slice(-2);
+  const hour = `${date.getHours()}`.padStart(2, "0");
+  const minute = `${date.getMinutes()}`.padStart(2, "0");
+  const second = `${date.getSeconds()}`.padStart(2, "0");
+  return `${month}/${day}/${year} ${hour}:${minute}:${second}`;
 }
 
 function buildWindowsTaskRunTarget(nodePath: string, scriptPath: string): string {

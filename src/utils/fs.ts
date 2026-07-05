@@ -22,6 +22,7 @@ export const JOBS_FILE = path.join(resolvedAppDir, "jobs.json");
 export const LOOPS_FILE = path.join(resolvedAppDir, "loops.json");
 export const LOG_DIR = path.join(resolvedAppDir, "logs");
 export const TMP_DIR = path.join(resolvedAppDir, ".tmp");
+export const WAKE_EVENT_FILE = path.join(resolvedAppDir, "wake-event.json");
 
 export async function ensureAppDirs(): Promise<void> {
   await mkdir(APP_DIR, { recursive: true });

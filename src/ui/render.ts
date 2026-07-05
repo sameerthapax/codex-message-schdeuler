@@ -2,7 +2,7 @@ import boxen from "boxen";
 import chalk from "chalk";
 import Table from "cli-table3";
 
-import type { CodexSession, DependencyCheck, ScheduledJob, ScheduleMode, ScheduledLoop } from "../types.js";
+import type { CodexSession, DependencyCheck, ScheduledJob, ScheduleMode, ScheduledLoop, SleepPolicy } from "../types.js";
 import { formatScheduledTime } from "../scheduler/timeParser.js";
 import { theme } from "./theme.js";
 import { formatLoopCadence } from "../loops/LoopService.js";
@@ -52,6 +52,7 @@ export function renderJobConfirmation(input: {
   scheduledAt: Date;
   message: string;
   scheduleMode?: ScheduleMode;
+  sleepPolicy?: SleepPolicy;
 }): string {
   return boxen(
     [
@@ -59,6 +60,7 @@ export function renderJobConfirmation(input: {
       `${theme.muted("ID")}       ${input.sessionId}`,
       input.scheduleMode ? `${theme.accent("Mode")}     ${formatScheduleMode(input.scheduleMode)}` : undefined,
       `${theme.accent("Send at")}  ${formatScheduledTime(input.scheduledAt)}`,
+      input.sleepPolicy ? `${theme.accent("Sleep")}    ${formatSleepPolicy(input.sleepPolicy)}` : undefined,
       `${theme.accent("Message")}  ${input.message}`,
     ]
       .filter((line): line is string => Boolean(line))
@@ -137,5 +139,14 @@ function formatScheduleMode(mode: ScheduleMode): string {
       return "Weekly reset";
     default:
       return "Custom time";
+  }
+}
+
+function formatSleepPolicy(policy: SleepPolicy): string {
+  switch (policy) {
+    case "catch_up_on_wake":
+      return "Catch up on wake";
+    default:
+      return "Wake Mac if possible";
   }
 }

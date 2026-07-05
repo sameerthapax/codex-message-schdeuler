@@ -9,9 +9,9 @@ import { LoopService, formatLoopSummary } from "../loops/LoopService.js";
 import { SchedulerService } from "../scheduler/SchedulerService.js";
 import { formatScheduledTime, parseScheduledTime } from "../scheduler/timeParser.js";
 import { renderJobConfirmation, renderJobSaved, renderSessionSummary, renderWelcome } from "../ui/render.js";
-import { chooseSession, confirmLoopCreate, confirmResetSchedule, confirmSchedule, confirmUseStaleResetTime, promptLoopCadence, promptLoopStartMode, promptManualSession, promptMessage, promptScheduleInput, promptScheduleIntent, promptScheduleMode, promptSessionPreference, promptTimeInput } from "../ui/prompts.js";
+import { chooseSession, confirmLoopCreate, confirmResetSchedule, confirmSchedule, confirmUseStaleResetTime, promptLoopCadence, promptLoopStartMode, promptManualSession, promptMessage, promptScheduleInput, promptScheduleIntent, promptScheduleMode, promptSessionPreference, promptSleepPolicy, promptTimeInput } from "../ui/prompts.js";
 import { theme } from "../ui/theme.js";
-import type { CodexSession, ScheduleMode, UsageSnapshot } from "../types.js";
+import type { CodexSession, ScheduleMode, SleepPolicy, UsageSnapshot } from "../types.js";
 
 export async function runScheduleCommand(): Promise<void> {
   console.log(renderWelcome());
@@ -53,6 +53,7 @@ export async function runScheduleCommand(): Promise<void> {
 
   const scheduleMode = await promptScheduleMode();
   const resolvedTiming = await resolveScheduledTiming(session, scheduleMode, true);
+  const sleepPolicy = await promptSleepPolicy();
   const message = resolvedTiming.message ?? await promptMessage();
   const scheduledAt = resolvedTiming.date;
 
@@ -63,6 +64,7 @@ export async function runScheduleCommand(): Promise<void> {
       scheduledAt: scheduledAt.date,
       message,
       scheduleMode: resolvedTiming.scheduleMode,
+      sleepPolicy,
     }),
   );
 
@@ -78,6 +80,7 @@ export async function runScheduleCommand(): Promise<void> {
     scheduledAt: scheduledAt.date,
     scheduleMode: resolvedTiming.scheduleMode,
     usageSnapshot: resolvedTiming.usageSnapshot,
+    sleepPolicy,
   });
 
   console.log(renderJobSaved(job));
@@ -96,9 +99,11 @@ async function runLoopScheduleFlow(session: CodexSession): Promise<void> {
           scheduleMode: "custom" as const,
         }
       : await resolveLoopResetTiming(session);
+  const sleepPolicy = await promptSleepPolicy();
   const startAt = resolvedTiming.date.date;
 
   console.log(theme.info("Loop message: hi"));
+  console.log(theme.info(`Sleep policy: ${sleepPolicy}`));
   console.log(
     theme.info(
       `Loop cadence: ${formatLoopSummary({
@@ -124,6 +129,7 @@ async function runLoopScheduleFlow(session: CodexSession): Promise<void> {
     session,
     cadence,
     startAt,
+    sleepPolicy,
   });
 
   console.log(theme.success(`Created loop ${loop.id}.`));

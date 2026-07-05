@@ -1,7 +1,7 @@
 import { confirm, input, select } from "@inquirer/prompts";
 
 import type { SessionPreference } from "../config/AppConfigStore.js";
-import type { CodexSession, LoopCadence, ScheduleMode } from "../types.js";
+import type { CodexSession, LoopCadence, ScheduleMode, SleepPolicy } from "../types.js";
 
 export type ScheduleIntent = "one_time" | "loop";
 
@@ -197,6 +197,25 @@ export async function confirmLoopCreate(): Promise<boolean> {
   return confirm({
     message: "Create this loop?",
     default: true,
+  });
+}
+
+export async function promptSleepPolicy(): Promise<SleepPolicy> {
+  return select({
+    message: "Sleep policy",
+    default: "wake_mac_if_possible",
+    choices: [
+      {
+        value: "wake_mac_if_possible",
+        name: "wake_mac_if_possible",
+        description: "Default. On macOS, try to schedule a system wake with pmset for the earliest pending job.",
+      },
+      {
+        value: "catch_up_on_wake",
+        name: "catch_up_on_wake",
+        description: "Do not try to wake the Mac. If asleep, send overdue jobs after wake.",
+      },
+    ],
   });
 }
 

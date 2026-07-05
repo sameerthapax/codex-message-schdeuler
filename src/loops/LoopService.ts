@@ -4,9 +4,11 @@ import { addDays, addHours, addWeeks } from "date-fns";
 import { createDefaultScheduler, type SchedulerAdapter } from "../daemon/DaemonService.js";
 import { JobStore } from "../scheduler/JobStore.js";
 import { formatScheduledTime } from "../scheduler/timeParser.js";
-import type { CodexSession, LoopCadence, ScheduledJob, ScheduledLoop } from "../types.js";
+import type { CodexSession, LoopCadence, ScheduledJob, ScheduledLoop, SleepPolicy } from "../types.js";
 import { logLine } from "../utils/logger.js";
 import { LoopStore } from "./LoopStore.js";
+
+const TARGET_QUEUED_LOOP_JOBS = 5;
 
 export class LoopService {
   constructor(
@@ -19,6 +21,7 @@ export class LoopService {
     session: CodexSession;
     cadence: LoopCadence;
     startAt: Date;
+    sleepPolicy?: SleepPolicy;
   }): Promise<ScheduledLoop> {
     const loop: ScheduledLoop = {
       id: randomUUID(),
@@ -30,6 +33,7 @@ export class LoopService {
       message: "hi",
       status: "active",
       createdAt: new Date().toISOString(),
+      sleepPolicy: input.sleepPolicy ?? "wake_mac_if_possible",
     };
 
     await this.loopStore.create(loop);
@@ -75,7 +79,10 @@ export class LoopService {
     return loop;
   }
 
-  async replenishDueLoops(now = new Date()): Promise<void> {
+  async replenishDueLoops(
+    now = new Date(),
+    options: { refreshSchedule?: boolean } = {},
+  ): Promise<void> {
     const loops = await this.loopStore.list();
     for (const loop of loops) {
       if (loop.status !== "active") {
@@ -83,7 +90,9 @@ export class LoopService {
       }
       await this.ensureFutureJobsForLoop(loop, now);
     }
-    await this.launchdScheduler.refreshSchedule().catch(() => undefined);
+    if (options.refreshSchedule !== false) {
+      await this.launchdScheduler.refreshSchedule().catch(() => undefined);
+    }
   }
 
   private async ensureFutureJobsForLoop(loop: ScheduledLoop, now: Date): Promise<void> {
@@ -103,7 +112,7 @@ export class LoopService {
     const anchorAt = new Date(loop.anchorAt);
 
     let pendingCount = pendingFutureJobs.length;
-    while (pendingCount < 2) {
+    while (pendingCount < TARGET_QUEUED_LOOP_JOBS) {
       const nextOccurrence = latestOccurrence
         ? computeNextOccurrence(loop.cadence, latestOccurrence, now)
         : anchorAt;
@@ -135,6 +144,7 @@ function createLoopJob(loop: ScheduledLoop, scheduledAt: Date): ScheduledJob {
     loopId: loop.id,
     loopCadence: loop.cadence,
     loopOccurrenceAt: scheduledAt.toISOString(),
+    sleepPolicy: loop.sleepPolicy ?? "wake_mac_if_possible",
   };
 }
 

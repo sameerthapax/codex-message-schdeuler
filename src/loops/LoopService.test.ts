@@ -17,7 +17,7 @@ describe("LoopService", () => {
     vi.unstubAllEnvs();
   });
 
-  test("createLoop enqueues two future jobs", async () => {
+  test("createLoop enqueues five future jobs", async () => {
     const { LoopService } = await import("./LoopService.js");
     const { LoopStore } = await import("./LoopStore.js");
     const { JobStore } = await import("../scheduler/JobStore.js");
@@ -42,12 +42,12 @@ describe("LoopService", () => {
     const jobs = await new JobStore().list();
     const loopJobs = jobs.filter((job) => job.loopId === loop.id);
 
-    expect(loopJobs).toHaveLength(2);
+    expect(loopJobs).toHaveLength(5);
     expect(loopJobs[0]?.message).toBe("hi");
     expect(loopJobs.every((job) => job.status === "pending")).toBe(true);
   });
 
-  test("replenishDueLoops keeps two future pending jobs", async () => {
+  test("replenishDueLoops keeps five future pending jobs", async () => {
     const { LoopService } = await import("./LoopService.js");
     const { LoopStore } = await import("./LoopStore.js");
     const { JobStore } = await import("../scheduler/JobStore.js");
@@ -84,7 +84,7 @@ describe("LoopService", () => {
         new Date(job.scheduledAt).getTime() > new Date("2026-07-02T10:01:00.000Z").getTime(),
     );
 
-    expect(futurePending).toHaveLength(2);
+    expect(futurePending).toHaveLength(5);
   });
 
   test("cancelLoop cancels pending loop jobs", async () => {
